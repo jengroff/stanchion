@@ -47,6 +47,12 @@ def classify(exc: Exception, context: NodeContext, classifiers: list[Classifier]
                 return result
     if isinstance(exc, ContractViolation):
         return FailureClass.TERMINAL
+    try:
+        from armature.cost import BudgetExceeded
+    except ImportError:
+        BudgetExceeded = None
+    if BudgetExceeded is not None and isinstance(exc, BudgetExceeded):
+        return FailureClass.RECOVERABLE
     if isinstance(exc, TimeoutError):
         return FailureClass.RECOVERABLE
     if isinstance(exc, ValueError):
