@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stanchion"
+version = "0.1.1"
+description = "Framework-agnostic agent reliability primitives for enforcing contracts, checkpointing, tracing, and execution."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["pydantic>=2.0"]
+license = "MIT"
+license-files = ["LICENSE"]
+classifiers = [
+  "Programming Language :: Python :: 3.12",
+  "Operating System :: OS Independent"
+]
+
+[project.optional-dependencies]
+redis = ["redis>=5.0"]
+langgraph = ["langgraph>=0.2"]
+dev = ["pytest", "pytest-asyncio", "ruff", "mypy", "uv"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["stanchion*"]
