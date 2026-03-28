@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Callable
 from pydantic import BaseModel
-from armature.contracts import ContractViolation
+from stanchion.contracts import ContractViolation
 
 
 class FailureClass(StrEnum):
@@ -48,7 +48,7 @@ def classify(exc: Exception, context: NodeContext, classifiers: list[Classifier]
     if isinstance(exc, ContractViolation):
         return FailureClass.TERMINAL
     try:
-        from armature.cost import BudgetExceeded
+        from stanchion.cost import BudgetExceeded
     except ImportError:
         BudgetExceeded = None
     if BudgetExceeded is not None and isinstance(exc, BudgetExceeded):

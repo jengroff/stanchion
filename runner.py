@@ -3,10 +3,10 @@ from datetime import datetime, timezone
 from uuid import uuid4
 from typing import Any, Awaitable, Callable
 from pydantic import BaseModel, Field
-from armature.checkpoint import CheckpointManager
-from armature.contracts import ContractRegistry, NodeContract
-from armature.cost import CostTracker, ModelHint, NodeUsage, ExecutionBudget
-from armature.failures import (
+from stanchion.checkpoint import CheckpointManager
+from stanchion.contracts import ContractRegistry, NodeContract
+from stanchion.cost import CostTracker, ModelHint, NodeUsage, ExecutionBudget
+from stanchion.failures import (
     FailureClass,
     NodeContext,
     PolicyMap,
@@ -14,7 +14,7 @@ from armature.failures import (
     classify,
     default_policy_map,
 )
-from armature.trace import ExecutionResult, ExecutionTrace, RunStatus, TraceEvent
+from stanchion.trace import ExecutionResult, ExecutionTrace, RunStatus, TraceEvent
 
 
 class RunConfig(BaseModel):
@@ -73,11 +73,14 @@ class ArmatureRunner:
                 input_model = self.registry.validate_input(node_id, current_state.model_dump())
                 start_ts = datetime.now(timezone.utc)
                 try:
-                    output_raw = await node(input_model)
+                    output = await node(input_model)
+                    if isinstance(output, tuple) and len(output) == 2:
+                        output_raw, tokens_used = output
+                    else:
+                        output_raw = output
+                        tokens_used = 0
                     output_model = self.registry.validate_output(node_id, output_raw)
                     duration_ms = int((datetime.now(timezone.utc) - start_ts).total_seconds() * 1000)
-                    hint = self.config.model_hints.get(node_id)
-                    tokens_used = hint.max_tokens if hint and hint.max_tokens is not None else 0
                     self.cost_tracker.record(NodeUsage(node_id=node_id, tokens_used=tokens_used, cost_usd=0.0, latency_ms=duration_ms))
                     self.cost_tracker.check_budget(self.config.budget, node_id)
                     self.checkpoint_manager.checkpoint(self.config.run_id, node_id, output_model)

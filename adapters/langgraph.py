@@ -2,7 +2,7 @@ import asyncio
 import importlib
 from typing import Any
 from pydantic import BaseModel
-from armature.contracts import BoundaryValidator, ContractViolation, ContractRegistry, NodeContract
+from stanchion.contracts import BoundaryValidator, ContractViolation, ContractRegistry, NodeContract
 
 
 def extract_state_dict(state: Any) -> dict:

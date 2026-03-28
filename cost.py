@@ -63,8 +63,8 @@ class CostTracker:
         usage = self._usage.get(node_id)
         if usage is None:
             return
-        if budget.max_tokens_total is not None and usage.tokens_used > budget.max_tokens_total:
-            raise BudgetExceeded("tokens", float(budget.max_tokens_total), float(usage.tokens_used), node_id)
+        if budget.max_tokens_total is not None and self.total_tokens > budget.max_tokens_total:
+            raise BudgetExceeded("tokens", float(budget.max_tokens_total), float(self.total_tokens), node_id)
         if budget.max_cost_usd is not None and usage.cost_usd > budget.max_cost_usd:
             raise BudgetExceeded("cost", float(budget.max_cost_usd), float(usage.cost_usd), node_id)
         if budget.max_latency_ms is not None and usage.latency_ms > budget.max_latency_ms:

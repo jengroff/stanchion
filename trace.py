@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Iterator
 from pydantic import BaseModel
-from armature.failures import FailureClass
+from stanchion.failures import FailureClass
 
 
 @dataclass
@@ -70,7 +70,6 @@ class ExecutionTrace:
         return iter(self._events)
 
 
-@dataclass
 class RunStatus(StrEnum):
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
