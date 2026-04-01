@@ -1,55 +1,171 @@
-# Python bytecode
+# =============================================================================
+# Python
+# =============================================================================
+
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
 
-# Distribution / packaging
+# C extensions
+*.so
+
+# =============================================================================
+# Distribution / Packaging
+# =============================================================================
+
 build/
 dist/
 *.egg-info/
-.eggs/
-pip-wheel-metadata/
 *.egg
+.eggs/
 MANIFEST
+pip-wheel-metadata/
+wheels/
+*.whl
 
-# Virtual environments
+# =============================================================================
+# Virtual Environments
+# =============================================================================
+
 .venv/
-env/
 venv/
+env/
 ENV/
-.env
 
-# Testing
+# =============================================================================
+# Environment Variables / Secrets
+# =============================================================================
+
+.env
+.env.*
+!.env.example
+
+# =============================================================================
+# Testing / Coverage
+# =============================================================================
+
 .pytest_cache/
 .coverage
 .coverage.*
-.cache
 htmlcov/
-nosetests.xml
 coverage.xml
 *.cover
-*.py.cover
+*.py,cover
+nosetests.xml
+.cache/
 
-# Type checkers
+# =============================================================================
+# Type Checkers / Linters
+# =============================================================================
+
+# mypy
 .mypy_cache/
 .dmypy.json
 dmypy.json
+
+# pyright
+.pyright/
+
+# pyre
 .pyre/
+
+# pytype
 .pytype/
 
-# Editor directories
+# ty
+.ty/
+
+# ruff
+.ruff_cache/
+
+# =============================================================================
+# Documentation (MkDocs)
+# =============================================================================
+
+site/
+
+# =============================================================================
+# Editors / IDEs
+# =============================================================================
+
+# VS Code
 .vscode/
+
+# JetBrains (PyCharm, IntelliJ, etc.)
 .idea/
+
+# Vim / Neovim
 *.swp
 *.swo
+*~
 
-# OS files
+# Sublime Text
+*.sublime-workspace
+*.sublime-project
+
+# Emacs
+\#*\#
+.#*
+
+# =============================================================================
+# OS Generated Files
+# =============================================================================
+
+# macOS
 .DS_Store
-Thumbs.db
+.AppleDouble
+.LSOverride
 
-# UV lock files
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+.directory
+
+# =============================================================================
+# Coding Agents
+# =============================================================================
+
+# Claude Code
+.claude/
+
+# Cursor
+.cursor/
+.cursorignore
+.cursorindexingignore
+
+# Aider
+.aider*
+
+# Codeium / Windsurf
+.codeium/
+.windsurf/
+
+# Cody
+.cody/
+
+# Amazon Q / CodeWhisperer
+.aws/amazonq/
+
+# Tabnine
+.tabnine_root
+
+# Continue
+.continue/
+
+# =============================================================================
+# uv
+# =============================================================================
+
 uv.lock
 
-# Other
+# =============================================================================
+# Misc
+# =============================================================================
+
 *.log
 *.sqlite3
+*.db

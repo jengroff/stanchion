@@ -31,6 +31,14 @@ class FailurePolicy(BaseModel):
         max_retries: Maximum number of retry attempts before giving up.
         backoff_seconds: Maximum backoff duration in seconds (actual delay is jittered).
         fallback_node_id: Optional node to route to instead of retrying.
+
+    Example::
+
+        # Aggressive retries for recoverable errors
+        policy = FailurePolicy(max_retries=5, backoff_seconds=2.0)
+
+        # No retries for terminal errors
+        policy = FailurePolicy(max_retries=0, backoff_seconds=0.0)
     """
 
     max_retries: int = 3

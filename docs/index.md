@@ -1,10 +1,49 @@
 # Stanchion
 
-**Framework-agnostic reliability primitives for agent pipelines.**
+**Reliability primitives for agent pipelines.**
 
-Stanchion gives you the building blocks to make LLM agent pipelines robust:
-contract validation, checkpointing, retry policies, cost tracking, and
-execution tracing — without tying you to any particular agent framework.
+## Why Stanchion?
+
+LLM agent pipelines fail in ways that traditional software doesn't. API calls time out, models return malformed data, costs spiral, and when something breaks mid-pipeline you lose all progress. Stanchion gives you the building blocks to handle this:
+
+- **Contracts** — catch bad data at node boundaries before it propagates downstream
+- **Failure classification** — automatically distinguish transient errors from permanent ones
+- **Retry policies** — configurable retries with jittered backoff, tuned per failure type
+- **Checkpointing** — save progress and resume from where you left off
+- **Cost tracking** — enforce token, dollar, and latency budgets
+- **Execution tracing** — full audit trail of every attempt, with diffing and export
+
+No framework lock-in. Works with any async Python code. Compose what you need, ignore what you don't.
+
+## Quick Start
+
+```python
+from pydantic import BaseModel
+from stanchion import StanchionRunner
+
+
+class Input(BaseModel):
+    value: int
+
+
+class Output(BaseModel):
+    result: int
+
+
+runner = StanchionRunner.quick()  # (1)!
+
+@runner.node("double", input=Input, output=Output)  # (2)!
+async def double(state: Input) -> dict:
+    return {"result": state.value * 2}
+
+result = await runner.run([double], Input(value=5))  # (3)!
+print(result.status)       # COMPLETED
+print(result.final_state)  # result=10
+```
+
+1. Creates a runner with sensible defaults: in-memory checkpointing, unlimited budget, standard retry policies. Override any of these with keyword arguments.
+2. Declares the node's input/output contract and registers it automatically. No separate registry setup needed.
+3. Runs the pipeline with contract validation, retry handling, cost tracking, and checkpointing at every step.
 
 ## Install
 
@@ -14,61 +53,44 @@ pip install stanchion
 
 Optional extras:
 
-```bash
-pip install stanchion[redis]       # Redis-backed checkpointing
-pip install stanchion[langgraph]   # LangGraph adapter
-```
+=== "Redis checkpointing"
 
-## Quick Start
+    ```bash
+    pip install stanchion[redis]
+    ```
 
-```python
-from pydantic import BaseModel
+=== "LangGraph adapter"
 
-from stanchion import (
-    CheckpointManager,
-    ContractRegistry,
-    ExecutionBudget,
-    InMemoryStore,
-    NodeContract,
-    RunConfig,
-    StanchionRunner,
-    default_policy_map,
-    stanchion_node,
-)
-
-
-class InputState(BaseModel):
-    value: int
-
-
-class OutputState(BaseModel):
-    result: int
-
-
-# 1. Define contracts
-registry = ContractRegistry()
-contract = NodeContract(node_id="double", input_schema=InputState, output_schema=OutputState)
-registry.register(contract)
-
-# 2. Decorate your node
-@stanchion_node("double", contract)
-async def double(state: InputState) -> dict:
-    return {"result": state.value * 2}
-
-# 3. Configure and run
-store = InMemoryStore()
-config = RunConfig(
-    budget=ExecutionBudget.unlimited(),
-    policy_map=default_policy_map(),
-)
-runner = StanchionRunner(registry, CheckpointManager(store), config)
-result = await runner.run([double], InputState(value=5))
-
-print(result.status)       # COMPLETED
-print(result.final_state)  # result=10
-```
+    ```bash
+    pip install stanchion[langgraph]
+    ```
 
 ## Next Steps
 
-- [Concepts](concepts.md) — understand the architecture and design decisions
-- [API Reference](api/runner.md) — full API documentation
+<div class="grid cards" markdown>
+
+-   **Tutorial**
+
+    ---
+
+    Build a pipeline step by step, from hello-world to production-grade.
+
+    [:octicons-arrow-right-24: Start the tutorial](tutorial/index.md)
+
+-   **Concepts**
+
+    ---
+
+    Understand the architecture and design decisions behind each primitive.
+
+    [:octicons-arrow-right-24: Read the concepts guide](concepts.md)
+
+-   **API Reference**
+
+    ---
+
+    Full documentation for every class, function, and decorator.
+
+    [:octicons-arrow-right-24: Browse the API](api/runner.md)
+
+</div>

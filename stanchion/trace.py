@@ -44,6 +44,20 @@ class ExecutionTrace:
     """Ordered collection of :class:`TraceEvent` instances for a pipeline run.
 
     Provides filtering, diffing, serialization, and iteration over events.
+
+    Example::
+
+        result = await runner.run(nodes, state)
+
+        # Inspect failures
+        for event in result.trace.failures():
+            print(f"{event.node_id}: {event.failure_message}")
+
+        # Compare two traces
+        diffs = trace_a.diff(trace_b)
+
+        # Export to JSON
+        json_str = result.trace.to_json()
     """
 
     def __init__(self) -> None:

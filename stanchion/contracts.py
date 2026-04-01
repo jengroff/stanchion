@@ -12,6 +12,16 @@ class NodeContract(BaseModel):
         node_id: Unique identifier for the node this contract governs.
         input_schema: Pydantic model class that incoming state must conform to.
         output_schema: Pydantic model class that outgoing state must conform to.
+
+    Example::
+
+        class Query(BaseModel):
+            text: str
+
+        class Result(BaseModel):
+            urls: list[str]
+
+        contract = NodeContract(node_id="search", input_schema=Query, output_schema=Result)
     """
 
     node_id: str
@@ -71,8 +81,11 @@ class ContractRegistry:
     Example::
 
         registry = ContractRegistry()
-        registry.register(NodeContract(node_id="extract", input_schema=In, output_schema=Out))
-        validated = registry.validate_input("extract", {"url": "https://..."})
+        registry.register(NodeContract(node_id="search", input_schema=Query, output_schema=Result))
+
+        # Validate raw data against a node's schema
+        validated_input = registry.validate_input("search", {"text": "python"})
+        validated_output = registry.validate_output("search", {"urls": ["https://..."]})
     """
 
     def __init__(self) -> None:
