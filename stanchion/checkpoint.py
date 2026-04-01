@@ -42,6 +42,12 @@ class InMemoryStore:
 
     State is serialized to JSON internally so that round-trip behavior
     matches persistent backends.
+
+    Example::
+
+        store = InMemoryStore()
+        store.save("run-1", "node-1", MyModel(value=42))
+        loaded = store.load("run-1", "node-1")
     """
 
     def __init__(self) -> None:
@@ -111,6 +117,11 @@ class RedisStore:
     Args:
         redis_url: Redis connection URL (e.g. ``redis://localhost:6379``).
         ttl_seconds: Time-to-live for checkpoint keys. Defaults to 3600 (1 hour).
+
+    Example::
+
+        store = RedisStore("redis://localhost:6379", ttl_seconds=7200)
+        manager = CheckpointManager(store)
     """
 
     def __init__(self, redis_url: str, ttl_seconds: int = 3600) -> None:
@@ -176,6 +187,12 @@ class CheckpointManager:
 
     Args:
         store: The storage backend to use.
+
+    Example::
+
+        manager = CheckpointManager(InMemoryStore())
+        manager.checkpoint("run-1", "node-1", output_state)
+        resumed = manager.resume("run-1", "node-1", OutputSchema)
     """
 
     def __init__(self, store: CheckpointStore) -> None:

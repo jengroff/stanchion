@@ -8,14 +8,25 @@ theme:
   name: material
   features:
     - content.code.copy
+    - content.code.annotate
     - navigation.sections
     - navigation.expand
+    - navigation.tabs
   palette:
     - scheme: default
       primary: indigo
 
 nav:
   - Home: index.md
+  - Tutorial:
+      - Getting Started: tutorial/index.md
+      - Your First Pipeline: tutorial/first-pipeline.md
+      - Adding Contracts: tutorial/adding-contracts.md
+      - Retry & Failures: tutorial/retry-and-failures.md
+      - Checkpointing: tutorial/checkpointing.md
+      - Cost Control: tutorial/cost-control.md
+      - Tracing & Debugging: tutorial/tracing.md
+      - LangGraph Integration: tutorial/langgraph.md
   - Concepts: concepts.md
   - API Reference:
       - Runner: api/runner.md

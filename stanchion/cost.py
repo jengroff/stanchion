@@ -32,6 +32,14 @@ class ExecutionBudget(BaseModel):
         max_tokens_total: Maximum total tokens across all nodes.
         max_cost_usd: Maximum total cost in USD across all nodes.
         max_latency_ms: Maximum total latency in milliseconds across all nodes.
+
+    Example::
+
+        # No limits (default)
+        budget = ExecutionBudget.unlimited()
+
+        # Constrain tokens and cost
+        budget = ExecutionBudget(max_tokens_total=10_000, max_cost_usd=0.50)
     """
 
     max_tokens_total: int | None = None
@@ -84,6 +92,13 @@ class CostTracker:
 
     Usage is keyed by ``node_id`` and accumulated across multiple calls to
     :meth:`record` for the same node.
+
+    Example::
+
+        tracker = CostTracker()
+        tracker.record(NodeUsage(node_id="llm", tokens_used=500, cost_usd=0.01, latency_ms=200))
+        tracker.check_budget(ExecutionBudget(max_tokens_total=1000), "llm")
+        print(tracker.total_tokens)  # 500
     """
 
     def __init__(self) -> None:

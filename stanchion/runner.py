@@ -32,7 +32,7 @@ class RunConfig(BaseModel):
 
     Attributes:
         run_id: Unique identifier for this run. Auto-generated if not provided.
-        budget: Resource budget constraints for the run.
+        budget: Resource budget constraints for the run. Defaults to unlimited.
         policy_map: Mapping from failure class to retry policy.
         model_hints: Per-node model selection hints.
         classifiers: Custom failure classifiers checked before built-in rules.
@@ -40,7 +40,7 @@ class RunConfig(BaseModel):
     """
 
     run_id: str = Field(default_factory=lambda: str(uuid4()))
-    budget: ExecutionBudget
+    budget: ExecutionBudget = Field(default_factory=ExecutionBudget.unlimited)
     policy_map: PolicyMap = Field(default_factory=default_policy_map)
     model_hints: dict[str, ModelHint] = Field(default_factory=dict)
     classifiers: list[Classifier] = Field(default_factory=list)
@@ -107,6 +107,92 @@ class StanchionRunner:
         self.cost_tracker = CostTracker()
         self.retry_budget = RetryBudget()
         self.trace = ExecutionTrace()
+
+    @classmethod
+    def quick(
+        cls,
+        *,
+        store: Any | None = None,
+        budget: ExecutionBudget | None = None,
+        policy_map: PolicyMap | None = None,
+        classifiers: list[Classifier] | None = None,
+        **config_kwargs: Any,
+    ) -> "StanchionRunner":
+        """Create a runner with sensible defaults — no boilerplate required.
+
+        Sets up an in-memory checkpoint store, unlimited budget, and default
+        retry policies. Override any of these via keyword arguments.
+
+        Args:
+            store: Checkpoint storage backend. Defaults to :class:`~stanchion.checkpoint.InMemoryStore`.
+            budget: Resource budget. Defaults to :meth:`~stanchion.cost.ExecutionBudget.unlimited`.
+            policy_map: Retry policies per failure class. Defaults to :func:`~stanchion.failures.default_policy_map`.
+            classifiers: Custom failure classifiers. Defaults to empty list.
+            **config_kwargs: Additional keyword arguments passed to :class:`RunConfig`.
+
+        Returns:
+            A fully configured :class:`StanchionRunner` ready to use.
+
+        Example::
+
+            runner = StanchionRunner.quick()
+
+            @runner.node("double", input=InputState, output=OutputState)
+            async def double(state: InputState) -> dict:
+                return {"result": state.value * 2}
+
+            result = await runner.run([double], InputState(value=5))
+        """
+        from stanchion.checkpoint import InMemoryStore
+
+        registry = ContractRegistry()
+        checkpoint_store = store if store is not None else InMemoryStore()
+        checkpoint_manager = CheckpointManager(checkpoint_store)
+        config = RunConfig(
+            budget=budget if budget is not None else ExecutionBudget.unlimited(),
+            policy_map=policy_map if policy_map is not None else default_policy_map(),
+            classifiers=classifiers if classifiers is not None else [],
+            **config_kwargs,
+        )
+        return cls(registry, checkpoint_manager, config)
+
+    def node(
+        self,
+        node_id: str,
+        *,
+        input: type[BaseModel],
+        output: type[BaseModel],
+    ) -> Callable[..., Any]:
+        """Decorator that creates a contract, registers it, and marks the function as a node.
+
+        Combines :func:`stanchion_node`, :class:`~stanchion.contracts.NodeContract` creation,
+        and :meth:`~stanchion.contracts.ContractRegistry.register` into a single step.
+
+        Args:
+            node_id: Unique identifier for this node.
+            input: Pydantic model class for the node's input schema.
+            output: Pydantic model class for the node's output schema.
+
+        Returns:
+            A decorator that registers the contract and marks the function as a pipeline node.
+
+        Example::
+
+            runner = StanchionRunner.quick()
+
+            @runner.node("extract", input=Document, output=Entities)
+            async def extract(state: Document) -> dict:
+                return {"entities": ["Python", "Pydantic"]}
+        """
+        contract = NodeContract(node_id=node_id, input_schema=input, output_schema=output)
+        self.registry.register(contract)
+
+        def decorator(func: Any) -> Any:
+            func._stanchion_node_id = node_id
+            func._stanchion_contract = contract
+            return func
+
+        return decorator
 
     async def run(self, node_sequence: list[NodeFunc], initial_state: BaseModel) -> ExecutionResult:
         """Execute a sequence of nodes with full reliability instrumentation.
