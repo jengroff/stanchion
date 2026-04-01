@@ -1,6 +1,6 @@
 # Stanchion
 
-Stanchion is a framework-agnostic reliability library for building robust agent pipelines with explicit contracts, checkpointing, tracing, and failure classification.
+Framework-agnostic reliability primitives for building robust agent pipelines with explicit contracts, checkpointing, tracing, and failure classification.
 
 ## Install
 
@@ -12,40 +12,64 @@ pip install stanchion
 
 ```python
 from pydantic import BaseModel
-from stanchion.checkpoint import CheckpointManager, InMemoryStore
-from stanchion.contracts import ContractRegistry, NodeContract
-from stanchion.cost import ExecutionBudget
-from stanchion.failures import default_policy_map
-from stanchion.runner import ArmatureRunner, RunConfig, armature_node
+
+from stanchion import (
+    CheckpointManager,
+    ContractRegistry,
+    ExecutionBudget,
+    InMemoryStore,
+    NodeContract,
+    RunConfig,
+    StanchionRunner,
+    default_policy_map,
+    stanchion_node,
+)
+
 
 class InputState(BaseModel):
     value: int
 
+
 class OutputState(BaseModel):
     result: int
 
+
 registry = ContractRegistry()
-registry.register(NodeContract(node_id="node1", input_schema=InputState, output_schema=OutputState))
+contract = NodeContract(node_id="node1", input_schema=InputState, output_schema=OutputState)
+registry.register(contract)
 
 store = InMemoryStore()
 checkpoint_manager = CheckpointManager(store)
 config = RunConfig(run_id="run1", budget=ExecutionBudget.unlimited(), policy_map=default_policy_map())
-runner = ArmatureRunner(registry, checkpoint_manager, config)
+runner = StanchionRunner(registry, checkpoint_manager, config)
 
-@armature_node("node1", NodeContract(node_id="node1", input_schema=InputState, output_schema=OutputState))
+
+@stanchion_node("node1", contract)
 async def node1(state: InputState) -> dict:
     return {"result": state.value + 1}
+
 
 result = await runner.run([node1], InputState(value=1))
 print(result.final_state)
 ```
+
+## Documentation
+
+Full documentation including a concepts guide and API reference is available at the [docs site](https://jengroff.github.io/stanchion).
 
 ## Development
 
 Run tests:
 
 ```bash
-python -m pytest tests/
+python -m pytest tests/ -v --cov=stanchion --cov-fail-under=90
+```
+
+Lint and type check:
+
+```bash
+ruff check stanchion/ tests/
+uv run ty check stanchion/
 ```
 
 Build the package:
@@ -57,7 +81,7 @@ uv build
 Install development dependencies:
 
 ```bash
-pip install -e .[dev]
+pip install -e ".[dev]"
 ```
 
 Optional extras:

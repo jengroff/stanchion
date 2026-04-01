@@ -1,4 +1,3 @@
-import pytest
 from stanchion.contracts import ContractViolation
 from stanchion.failures import (
     FailureClass,

@@ -1,11 +1,24 @@
+"""LangGraph adapter for applying stanchion contract validation to graph nodes."""
+
 import asyncio
 import importlib
+from collections.abc import Callable
 from typing import Any
+
 from pydantic import BaseModel
-from stanchion.contracts import BoundaryValidator, ContractViolation, ContractRegistry, NodeContract
+
+from stanchion.contracts import BoundaryValidator, ContractRegistry, NodeContract
 
 
-def extract_state_dict(state: Any) -> dict:
+def extract_state_dict(state: Any) -> dict[str, Any]:
+    """Convert a LangGraph state object to a plain dict.
+
+    Supports dicts, Pydantic models, objects with a ``.dict()`` method,
+    and plain objects with ``__dict__``.
+
+    Raises:
+        TypeError: If the state cannot be converted to a dict.
+    """
     if isinstance(state, dict):
         return dict(state)
     if isinstance(state, BaseModel):
@@ -19,27 +32,49 @@ def extract_state_dict(state: Any) -> dict:
     raise TypeError("Unable to extract state dict from LangGraph state")
 
 
-def armature_langgraph_node(node_id: str, contract: NodeContract):
-    def decorator(fn):
-        setattr(fn, "_armature_node_id", node_id)
-        setattr(fn, "_armature_contract", contract)
+def stanchion_langgraph_node(node_id: str, contract: NodeContract) -> Callable[..., Any]:
+    """Decorator that attaches stanchion contract metadata to a LangGraph node function.
+
+    Args:
+        node_id: Unique identifier for this node.
+        contract: The input/output contract for this node.
+    """
+
+    def decorator(fn: Any) -> Any:
+        fn._stanchion_node_id = node_id  # type: ignore[attr-defined]
+        fn._stanchion_contract = contract  # type: ignore[attr-defined]
         return fn
+
     return decorator
 
 
+# Backwards-compatible alias
+armature_langgraph_node = stanchion_langgraph_node
+
+
 class LangGraphAdapter:
+    """Wraps a LangGraph graph to apply stanchion contract validation on each node.
+
+    Args:
+        registry: Contract registry for validation.
+        runner: The stanchion runner instance (for future use with cost/trace integration).
+    """
+
     def __init__(self, registry: ContractRegistry, runner: Any) -> None:
         self.registry = registry
         self.runner = runner
         self._validator = BoundaryValidator()
 
     def wrap(self, graph: Any) -> Any:
+        """Discover stanchion-decorated nodes in *graph* and replace them with validating wrappers."""
         module_name = type(graph).__module__
         if module_name.startswith("langgraph"):
             try:
                 importlib.import_module("langgraph")
             except ImportError as exc:
-                raise ImportError("LangGraph is required for LangGraphAdapter; install with pip install langgraph") from exc
+                raise ImportError(
+                    "LangGraph is required for LangGraphAdapter; install with pip install stanchion[langgraph]"
+                ) from exc
         nodes = self._discover_nodes(graph)
         for name, fn in nodes.items():
             wrapped = self._wrap_node(fn)
@@ -47,33 +82,39 @@ class LangGraphAdapter:
         return graph
 
     def _discover_nodes(self, graph: Any) -> dict[str, Any]:
-        nodes = getattr(graph, "nodes", None)
-        if isinstance(nodes, dict):
-            return {name: fn for name, fn in nodes.items() if hasattr(fn, "_armature_node_id")}
-        nodes = getattr(graph, "_nodes", None)
-        if isinstance(nodes, dict):
-            return {name: fn for name, fn in nodes.items() if hasattr(fn, "_armature_node_id")}
+        """Find all stanchion-decorated nodes in a graph."""
+        for attr in ("nodes", "_nodes"):
+            nodes = getattr(graph, attr, None)
+            if isinstance(nodes, dict):
+                return {
+                    name: fn
+                    for name, fn in nodes.items()
+                    if hasattr(fn, "_stanchion_node_id") or hasattr(fn, "_armature_node_id")
+                }
         if hasattr(graph, "iter_nodes"):
-            return {name: fn for name, fn in graph.iter_nodes() if hasattr(fn, "_armature_node_id")}
+            return {
+                name: fn
+                for name, fn in graph.iter_nodes()
+                if hasattr(fn, "_stanchion_node_id") or hasattr(fn, "_armature_node_id")
+            }
         raise AttributeError("Unable to discover LangGraph nodes")
 
     def _replace_node(self, graph: Any, name: str, fn: Any) -> None:
-        nodes = getattr(graph, "nodes", None)
-        if isinstance(nodes, dict) and name in nodes:
-            nodes[name] = fn
-            return
-        nodes = getattr(graph, "_nodes", None)
-        if isinstance(nodes, dict) and name in nodes:
-            nodes[name] = fn
-            return
+        """Replace a node function in the graph."""
+        for attr in ("nodes", "_nodes"):
+            nodes = getattr(graph, attr, None)
+            if isinstance(nodes, dict) and name in nodes:
+                nodes[name] = fn
+                return
         if hasattr(graph, "add_node"):
             graph.add_node(name, fn)
             return
         raise AttributeError("Unable to replace LangGraph node")
 
     def _wrap_node(self, fn: Any) -> Any:
-        node_id = getattr(fn, "_armature_node_id")
-        contract = getattr(fn, "_armature_contract")
+        """Create a validating async wrapper around a node function."""
+        contract = getattr(fn, "_stanchion_contract", None) or fn._armature_contract
+
         async def wrapper(state: Any) -> Any:
             input_dict = extract_state_dict(state)
             input_model = self._validator(contract, "input", input_dict)
@@ -83,4 +124,5 @@ class LangGraphAdapter:
             output_dict = extract_state_dict(result)
             output_model = self._validator(contract, "output", output_dict)
             return output_model.model_dump()
+
         return wrapper

@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
-    branches: [main]
+    branches: [master]
 
 jobs:
   test:
@@ -24,7 +24,7 @@ jobs:
           pip install -e ".[dev]"
       - name: Lint with ruff
         run: ruff check stanchion/ tests/
-      - name: Type check with mypy
-        run: mypy stanchion/
-      - name: Run tests
-        run: pytest tests/ -v
+      - name: Type check with ty
+        run: ty check stanchion/
+      - name: Run tests with coverage
+        run: pytest tests/ -v --cov=stanchion --cov-report=term-missing --cov-fail-under=90

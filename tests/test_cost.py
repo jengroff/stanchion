@@ -1,9 +1,9 @@
 import pytest
+
 from stanchion.cost import (
     BudgetExceeded,
     CostTracker,
     ExecutionBudget,
-    ModelHint,
     NodeUsage,
 )
 
@@ -14,6 +14,7 @@ def test_record_and_accumulate_usage():
     tracker.record(NodeUsage(node_id="node1", tokens_used=5, cost_usd=0.2, latency_ms=30))
     assert tracker.total_tokens == 15
     assert tracker.total_cost_usd == 0.7
+    assert tracker.total_latency_ms == 80
     assert tracker.summary()["node1"].latency_ms == 80
 
 
@@ -37,22 +38,28 @@ def test_budget_exceeded_tokens():
     assert exc.node_id == "node1"
 
 
-def test_budget_exceeded_cost():
+def test_budget_exceeded_cost_is_aggregate():
+    """Cost budget checks total cost across all nodes, not per-node."""
     tracker = CostTracker()
-    tracker.record(NodeUsage(node_id="node1", tokens_used=10, cost_usd=2.0, latency_ms=50))
+    tracker.record(NodeUsage(node_id="node1", tokens_used=10, cost_usd=0.6, latency_ms=50))
+    tracker.record(NodeUsage(node_id="node2", tokens_used=10, cost_usd=0.6, latency_ms=50))
     budget = ExecutionBudget(max_cost_usd=1.0)
     with pytest.raises(BudgetExceeded) as exc_info:
-        tracker.check_budget(budget, "node1")
+        tracker.check_budget(budget, "node2")
     assert exc_info.value.dimension == "cost"
+    assert exc_info.value.actual == 1.2
 
 
-def test_budget_exceeded_latency():
+def test_budget_exceeded_latency_is_aggregate():
+    """Latency budget checks total latency across all nodes."""
     tracker = CostTracker()
-    tracker.record(NodeUsage(node_id="node1", tokens_used=10, cost_usd=0.5, latency_ms=150))
+    tracker.record(NodeUsage(node_id="node1", tokens_used=10, cost_usd=0.5, latency_ms=60))
+    tracker.record(NodeUsage(node_id="node2", tokens_used=10, cost_usd=0.5, latency_ms=60))
     budget = ExecutionBudget(max_latency_ms=100)
     with pytest.raises(BudgetExceeded) as exc_info:
-        tracker.check_budget(budget, "node1")
+        tracker.check_budget(budget, "node2")
     assert exc_info.value.dimension == "latency"
+    assert exc_info.value.actual == 120
 
 
 def test_unlimited_budget_never_raises():

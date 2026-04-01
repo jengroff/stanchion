@@ -1,13 +1,20 @@
+"""Pipeline runner with contract validation, retries, cost tracking, and checkpointing."""
+
 import asyncio
+import logging
 import random
-from datetime import datetime, timezone
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
+from typing import Any
 from uuid import uuid4
-from typing import Any, Awaitable, Callable
+
 from pydantic import BaseModel, Field
+
 from stanchion.checkpoint import CheckpointManager
 from stanchion.contracts import ContractRegistry, NodeContract
-from stanchion.cost import CostTracker, ModelHint, NodeUsage, ExecutionBudget
+from stanchion.cost import CostTracker, ExecutionBudget, ModelHint, NodeUsage
 from stanchion.failures import (
+    Classifier,
     FailureClass,
     NodeContext,
     PolicyMap,
@@ -17,24 +24,82 @@ from stanchion.failures import (
 )
 from stanchion.trace import ExecutionResult, ExecutionTrace, RunStatus, TraceEvent
 
+logger = logging.getLogger(__name__)
+
 
 class RunConfig(BaseModel):
+    """Configuration for a single pipeline run.
+
+    Attributes:
+        run_id: Unique identifier for this run. Auto-generated if not provided.
+        budget: Resource budget constraints for the run.
+        policy_map: Mapping from failure class to retry policy.
+        model_hints: Per-node model selection hints.
+        classifiers: Custom failure classifiers checked before built-in rules.
+        resume_from: Node ID to resume execution from (skips earlier nodes).
+    """
+
     run_id: str = Field(default_factory=lambda: str(uuid4()))
     budget: ExecutionBudget
     policy_map: PolicyMap = Field(default_factory=default_policy_map)
     model_hints: dict[str, ModelHint] = Field(default_factory=dict)
+    classifiers: list[Classifier] = Field(default_factory=list)
     resume_from: str | None = None
 
+    model_config = {"arbitrary_types_allowed": True}
 
-def armature_node(node_id: str, contract: NodeContract):
-    def decorator(func: Callable[[BaseModel], Awaitable[dict[str, Any]]]):
-        setattr(func, "_armature_node_id", node_id)
-        setattr(func, "_armature_contract", contract)
+
+NodeFunc = Callable[[BaseModel], Awaitable[dict[str, Any]]]
+"""Type alias for an async node function that takes a Pydantic model and returns a dict."""
+
+
+def stanchion_node(node_id: str, contract: NodeContract) -> Callable[..., Any]:
+    """Decorator that attaches contract metadata to an async node function.
+
+    Args:
+        node_id: Unique identifier for this node.
+        contract: The input/output contract for this node.
+
+    Returns:
+        A decorator that marks the function as a stanchion pipeline node.
+
+    Example::
+
+        @stanchion_node("extract", NodeContract(node_id="extract", input_schema=In, output_schema=Out))
+        async def extract(state: In) -> dict:
+            return {"url": state.url, "content": "..."}
+    """
+
+    def decorator(func: Any) -> Any:
+        func._stanchion_node_id = node_id
+        func._stanchion_contract = contract
         return func
+
     return decorator
 
 
-class ArmatureRunner:
+# Keep old name as alias for backwards compatibility during transition
+armature_node = stanchion_node
+
+
+class StanchionRunner:
+    """Orchestrates sequential node execution with reliability primitives.
+
+    Runs a sequence of async node functions, applying contract validation,
+    retry policies, cost tracking, and checkpointing at each step.
+
+    Args:
+        registry: Contract registry for input/output validation.
+        checkpoint_manager: Manager for saving and loading checkpoints.
+        config: Run configuration including budget, policies, and classifiers.
+
+    Example::
+
+        runner = StanchionRunner(registry, checkpoint_manager, config)
+        result = await runner.run([node1, node2], initial_state)
+        print(result.status, result.final_state)
+    """
+
     def __init__(self, registry: ContractRegistry, checkpoint_manager: CheckpointManager, config: RunConfig) -> None:
         self.registry = registry
         self.checkpoint_manager = checkpoint_manager
@@ -43,98 +108,188 @@ class ArmatureRunner:
         self.retry_budget = RetryBudget()
         self.trace = ExecutionTrace()
 
-    async def run(self, node_sequence: list[Callable[[BaseModel], Awaitable[dict[str, Any]]]], initial_state: BaseModel) -> ExecutionResult:
+    async def run(self, node_sequence: list[NodeFunc], initial_state: BaseModel) -> ExecutionResult:
+        """Execute a sequence of nodes with full reliability instrumentation.
+
+        Args:
+            node_sequence: Ordered list of async node functions to execute.
+            initial_state: The initial Pydantic model state to pass to the first node.
+
+        Returns:
+            An :class:`~stanchion.trace.ExecutionResult` with final state, trace, and cost info.
+        """
         current_state = initial_state
-        start_index = 0
-        if self.config.resume_from is not None:
-            for index, node in enumerate(node_sequence):
-                if self._node_id(node) == self.config.resume_from:
-                    start_index = index
-                    break
-            else:
-                return ExecutionResult(
-                    run_id=self.config.run_id,
-                    status=RunStatus.PARTIAL,
-                    final_state=current_state,
-                    trace=self.trace,
-                    total_cost_usd=self.cost_tracker.total_cost_usd,
-                    total_tokens=self.cost_tracker.total_tokens,
-                )
-            if start_index > 0:
-                previous = node_sequence[start_index - 1]
-                prev_contract = self._node_contract(previous)
-                loaded = self.checkpoint_manager.resume(self.config.run_id, getattr(previous, "_armature_node_id"), prev_contract.output_schema)
-                if loaded is not None:
-                    current_state = loaded
+        start_index = self._resolve_resume_index(node_sequence)
+        if start_index is None:
+            return self._build_result(RunStatus.PARTIAL, current_state)
+
+        current_state = self._load_resume_state(node_sequence, start_index, current_state)
+
         for node in node_sequence[start_index:]:
             node_id = self._node_id(node)
             contract = self._node_contract(node)
-            attempt = 1
-            input_model = None
-            while True:
-                input_model = self.registry.validate_input(node_id, current_state.model_dump())
-                start_ts = datetime.now(timezone.utc)
-                try:
-                    output = await node(input_model)
-                    if isinstance(output, tuple) and len(output) == 2:
-                        output_raw, tokens_used = output
-                    else:
-                        output_raw = output
-                        tokens_used = 0
-                    output_model = self.registry.validate_output(node_id, output_raw)
-                    duration_ms = int((datetime.now(timezone.utc) - start_ts).total_seconds() * 1000)
-                    self.cost_tracker.record(NodeUsage(node_id=node_id, tokens_used=tokens_used, cost_usd=0.0, latency_ms=duration_ms))
-                    self.cost_tracker.check_budget(self.config.budget, node_id)
-                    self.checkpoint_manager.checkpoint(self.config.run_id, node_id, output_model)
-                    self.trace.append(TraceEvent(node_id=node_id, run_id=self.config.run_id, attempt=attempt, timestamp_utc=start_ts, input_state=input_model.model_dump(), output_state=output_model.model_dump(), duration_ms=duration_ms))
-                    current_state = output_model
-                    break
-                except Exception as exc:
-                    duration_ms = int((datetime.now(timezone.utc) - start_ts).total_seconds() * 1000)
-                    failure_class = classify(exc, NodeContext(node_id=node_id, attempt=attempt, run_id=self.config.run_id))
-                    self.trace.append(TraceEvent(node_id=node_id, run_id=self.config.run_id, attempt=attempt, timestamp_utc=start_ts, input_state=input_model.model_dump() if input_model is not None else {}, output_state=None, duration_ms=duration_ms, failure=failure_class, failure_message=str(exc)))
-                    policy = self.config.policy_map.get(failure_class) or default_policy_map()[failure_class]
-                    if failure_class is FailureClass.TERMINAL:
-                        return ExecutionResult(
-                            run_id=self.config.run_id,
-                            status=RunStatus.FAILED,
-                            final_state=current_state,
-                            trace=self.trace,
-                            total_cost_usd=self.cost_tracker.total_cost_usd,
-                            total_tokens=self.cost_tracker.total_tokens,
-                        )
-                    self.retry_budget.increment(self.config.run_id, node_id)
-                    if self.retry_budget.exhausted(self.config.run_id, node_id, policy):
-                        return ExecutionResult(
-                            run_id=self.config.run_id,
-                            status=RunStatus.PARTIAL,
-                            final_state=current_state,
-                            trace=self.trace,
-                            total_cost_usd=self.cost_tracker.total_cost_usd,
-                            total_tokens=self.cost_tracker.total_tokens,
-                        )
-                    if policy.backoff_seconds > 0:
-                        await asyncio.sleep(random.uniform(0, policy.backoff_seconds))
-                    attempt += 1
-                    continue
+            logger.debug("Executing node %s (run=%s)", node_id, self.config.run_id)
+
+            result = await self._execute_node(node, node_id, contract, current_state)  # type: ignore[arg-type]
+            if result.status != RunStatus.COMPLETED:
+                return result
+            assert result.final_state is not None
+            current_state = result.final_state
+
         status = RunStatus.RESUMED if self.config.resume_from is not None else RunStatus.COMPLETED
+        return self._build_result(status, current_state)
+
+    async def _execute_node(
+        self, node: NodeFunc, node_id: str, contract: NodeContract, current_state: BaseModel
+    ) -> ExecutionResult:
+        """Execute a single node with retries, validation, and tracking."""
+        attempt = 1
+        input_model: BaseModel | None = None
+        while True:
+            input_model = self.registry.validate_input(node_id, current_state.model_dump())
+            start_ts = datetime.now(UTC)
+            try:
+                output_raw, tokens_used = self._unpack_output(await node(input_model))
+                output_model = self.registry.validate_output(node_id, output_raw)
+                duration_ms = self._elapsed_ms(start_ts)
+
+                self.cost_tracker.record(
+                    NodeUsage(node_id=node_id, tokens_used=tokens_used, cost_usd=0.0, latency_ms=duration_ms)
+                )
+                self.cost_tracker.check_budget(self.config.budget, node_id)
+                self.checkpoint_manager.checkpoint(self.config.run_id, node_id, output_model)
+
+                self.trace.append(
+                    TraceEvent(
+                        node_id=node_id,
+                        run_id=self.config.run_id,
+                        attempt=attempt,
+                        timestamp_utc=start_ts,
+                        input_state=input_model.model_dump(),
+                        output_state=output_model.model_dump(),
+                        duration_ms=duration_ms,
+                    )
+                )
+                logger.info("Node %s completed (attempt=%d, tokens=%d)", node_id, attempt, tokens_used)
+                return self._build_result(RunStatus.COMPLETED, output_model)
+
+            except Exception as exc:
+                result = await self._handle_failure(exc, node_id, attempt, start_ts, input_model, current_state)
+                if result is not None:
+                    return result
+                attempt += 1
+
+    async def _handle_failure(
+        self,
+        exc: Exception,
+        node_id: str,
+        attempt: int,
+        start_ts: datetime,
+        input_model: BaseModel | None,
+        current_state: BaseModel,
+    ) -> ExecutionResult | None:
+        """Classify a failure and decide whether to retry or stop.
+
+        Returns an ExecutionResult if the pipeline should stop, or None to continue retrying.
+        """
+        duration_ms = self._elapsed_ms(start_ts)
+        context = NodeContext(node_id=node_id, attempt=attempt, run_id=self.config.run_id)
+        failure_class = classify(exc, context, self.config.classifiers)
+
+        self.trace.append(
+            TraceEvent(
+                node_id=node_id,
+                run_id=self.config.run_id,
+                attempt=attempt,
+                timestamp_utc=start_ts,
+                input_state=input_model.model_dump() if input_model is not None else {},
+                output_state=None,
+                duration_ms=duration_ms,
+                failure=failure_class,
+                failure_message=str(exc),
+            )
+        )
+        logger.warning("Node %s failed (attempt=%d, class=%s): %s", node_id, attempt, failure_class, exc)
+
+        policy = self.config.policy_map.get(failure_class) or default_policy_map()[failure_class]
+
+        if failure_class is FailureClass.TERMINAL:
+            return self._build_result(RunStatus.FAILED, current_state)
+
+        self.retry_budget.increment(self.config.run_id, node_id)
+        if self.retry_budget.exhausted(self.config.run_id, node_id, policy):
+            logger.error("Node %s retries exhausted after %d attempts", node_id, attempt)
+            return self._build_result(RunStatus.PARTIAL, current_state)
+
+        if policy.backoff_seconds > 0:
+            await asyncio.sleep(random.uniform(0, policy.backoff_seconds))
+        return None
+
+    def _resolve_resume_index(self, node_sequence: list[NodeFunc]) -> int | None:
+        """Find the start index for resume, or 0 for fresh runs. Returns None if resume target not found."""
+        if self.config.resume_from is None:
+            return 0
+        for index, node in enumerate(node_sequence):
+            if self._node_id(node) == self.config.resume_from:
+                return index
+        logger.error("Resume target node %s not found in sequence", self.config.resume_from)
+        return None
+
+    def _load_resume_state(
+        self, node_sequence: list[NodeFunc], start_index: int, current_state: BaseModel
+    ) -> BaseModel:
+        """Load checkpoint state from the node before the resume point."""
+        if self.config.resume_from is None or start_index == 0:
+            return current_state
+        previous = node_sequence[start_index - 1]
+        prev_contract = self._node_contract(previous)
+        loaded = self.checkpoint_manager.resume(
+            self.config.run_id, self._node_id(previous), prev_contract.output_schema
+        )
+        if loaded is not None:
+            logger.info("Resumed from checkpoint at node %s", self._node_id(previous))
+            return loaded
+        return current_state
+
+    def _build_result(self, status: RunStatus, final_state: BaseModel | None) -> ExecutionResult:
+        """Construct an ExecutionResult from the current tracker/trace state."""
         return ExecutionResult(
             run_id=self.config.run_id,
             status=status,
-            final_state=current_state,
+            final_state=final_state,
             trace=self.trace,
             total_cost_usd=self.cost_tracker.total_cost_usd,
             total_tokens=self.cost_tracker.total_tokens,
         )
 
+    @staticmethod
+    def _unpack_output(output: Any) -> tuple[dict[str, Any], int]:
+        """Normalize node output to (dict, tokens_used)."""
+        if isinstance(output, tuple) and len(output) == 2:
+            return output[0], output[1]
+        return output, 0
+
+    @staticmethod
+    def _elapsed_ms(start: datetime) -> int:
+        """Milliseconds elapsed since *start*."""
+        return int((datetime.now(UTC) - start).total_seconds() * 1000)
+
     def _node_id(self, node: Callable[..., Any]) -> str:
-        node_id = getattr(node, "_armature_node_id", None)
+        """Extract the stanchion node ID from a decorated function."""
+        node_id: str | None = getattr(node, "_stanchion_node_id", None) or getattr(node, "_armature_node_id", None)
         if node_id is None:
-            raise TypeError("Node is missing armature node_id")
+            raise TypeError("Node is missing stanchion node_id — did you forget the @stanchion_node decorator?")
         return node_id
 
     def _node_contract(self, node: Callable[..., Any]) -> NodeContract:
-        contract = getattr(node, "_armature_contract", None)
+        """Extract the contract from a decorated function, falling back to the registry."""
+        contract: NodeContract | None = (
+            getattr(node, "_stanchion_contract", None) or getattr(node, "_armature_contract", None)
+        )
         if contract is not None:
             return contract
         return self.registry.get(self._node_id(node))
+
+
+# Backwards-compatible alias
+ArmatureRunner = StanchionRunner

@@ -1,5 +1,6 @@
 import pytest
 from pydantic import BaseModel
+
 from stanchion.contracts import ContractRegistry, ContractViolation, NodeContract
 
 
