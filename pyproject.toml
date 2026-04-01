@@ -19,7 +19,7 @@ classifiers = [
 [project.optional-dependencies]
 redis = ["redis>=5.0"]
 langgraph = ["langgraph>=0.2"]
-dev = ["pytest", "pytest-asyncio", "ruff", "mypy", "uv"]
+dev = ["pytest", "pytest-asyncio>=0.23", "ruff", "mypy", "uv"]
 
 [tool.setuptools.packages.find]
 where = ["."]

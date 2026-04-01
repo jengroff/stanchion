@@ -9,11 +9,6 @@ class NodeContract(BaseModel):
 
 
 class ContractViolation(Exception):
-    node_id: str
-    direction: Literal["input", "output"]
-    raw: dict
-    errors: list
-
     def __init__(self, node_id: str, direction: Literal["input", "output"], raw: dict, errors: list):
         self.node_id = node_id
         self.direction = direction

@@ -82,10 +82,10 @@ class RedisStore:
         self._ttl = ttl_seconds
 
     def _state_key(self, run_id: str, node_id: str) -> str:
-        return f"armature:{run_id}:{node_id}"
+        return f"stanchion:{run_id}:{node_id}"
 
     def _schema_key(self, run_id: str, node_id: str) -> str:
-        return f"armature:{run_id}:{node_id}:schema"
+        return f"stanchion:{run_id}:{node_id}:schema"
 
     def save(self, run_id: str, node_id: str, state: BaseModel) -> None:
         payload = state.model_dump_json()
@@ -103,7 +103,7 @@ class RedisStore:
         return schema.model_validate_json(payload)
 
     def delete(self, run_id: str) -> None:
-        pattern = f"armature:{run_id}:*"
+        pattern = f"stanchion:{run_id}:*"
         for key in self._client.scan_iter(match=pattern):
             self._client.delete(key)
 

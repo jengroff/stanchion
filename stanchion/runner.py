@@ -1,4 +1,5 @@
 import asyncio
+import random
 from datetime import datetime, timezone
 from uuid import uuid4
 from typing import Any, Awaitable, Callable
@@ -69,6 +70,7 @@ class ArmatureRunner:
             node_id = self._node_id(node)
             contract = self._node_contract(node)
             attempt = 1
+            input_model = None
             while True:
                 input_model = self.registry.validate_input(node_id, current_state.model_dump())
                 start_ts = datetime.now(timezone.utc)
@@ -90,7 +92,7 @@ class ArmatureRunner:
                 except Exception as exc:
                     duration_ms = int((datetime.now(timezone.utc) - start_ts).total_seconds() * 1000)
                     failure_class = classify(exc, NodeContext(node_id=node_id, attempt=attempt, run_id=self.config.run_id))
-                    self.trace.append(TraceEvent(node_id=node_id, run_id=self.config.run_id, attempt=attempt, timestamp_utc=start_ts, input_state=input_model.model_dump(), output_state=None, duration_ms=duration_ms, failure=failure_class, failure_message=str(exc)))
+                    self.trace.append(TraceEvent(node_id=node_id, run_id=self.config.run_id, attempt=attempt, timestamp_utc=start_ts, input_state=input_model.model_dump() if input_model is not None else {}, output_state=None, duration_ms=duration_ms, failure=failure_class, failure_message=str(exc)))
                     policy = self.config.policy_map.get(failure_class) or default_policy_map()[failure_class]
                     if failure_class is FailureClass.TERMINAL:
                         return ExecutionResult(
@@ -112,7 +114,7 @@ class ArmatureRunner:
                             total_tokens=self.cost_tracker.total_tokens,
                         )
                     if policy.backoff_seconds > 0:
-                        await asyncio.sleep(policy.backoff_seconds)
+                        await asyncio.sleep(random.uniform(0, policy.backoff_seconds))
                     attempt += 1
                     continue
         status = RunStatus.RESUMED if self.config.resume_from is not None else RunStatus.COMPLETED

@@ -56,8 +56,18 @@ class ExecutionTrace:
             if key not in right:
                 differences.append(f"Missing event in other trace: {key[0]} attempt {key[1]}")
                 continue
-            if left[key] != right[key]:
-                differences.append(f"Difference for {key[0]} attempt {key[1]}: {left[key]} != {right[key]}")
+            l, r = left[key], right[key]
+            logical_diff = (
+                l.node_id != r.node_id
+                or l.run_id != r.run_id
+                or l.attempt != r.attempt
+                or l.input_state != r.input_state
+                or l.output_state != r.output_state
+                or l.failure != r.failure
+                or l.failure_message != r.failure_message
+            )
+            if logical_diff:
+                differences.append(f"Difference for {key[0]} attempt {key[1]}: {l} != {r}")
         return differences
 
     def replay(self) -> Iterator[TraceEvent]:

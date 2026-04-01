@@ -81,6 +81,6 @@ class LangGraphAdapter:
             if asyncio.iscoroutine(result):
                 result = await result
             output_dict = extract_state_dict(result)
-            self._validator(contract, "output", output_dict)
-            return result
+            output_model = self._validator(contract, "output", output_dict)
+            return output_model.model_dump()
         return wrapper

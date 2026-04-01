@@ -30,11 +30,6 @@ class NodeUsage:
 
 
 class BudgetExceeded(Exception):
-    dimension: Literal["tokens", "cost", "latency"]
-    limit: float
-    actual: float
-    node_id: str
-
     def __init__(self, dimension: Literal["tokens", "cost", "latency"], limit: float, actual: float, node_id: str):
         self.dimension = dimension
         self.limit = limit
